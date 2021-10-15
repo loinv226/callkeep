@@ -24,3 +24,6 @@ doc/api/
 .vscode
 android/gradle*
 example/ios/Podfile.lock
+example/android/.settings/org.eclipse.buildship.core.prefs
+example/android/app/.settings/org.eclipse.buildship.core.prefs
+android/.settings/org.eclipse.buildship.core.prefs

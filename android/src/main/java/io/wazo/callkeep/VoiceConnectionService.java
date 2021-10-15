@@ -23,10 +23,14 @@ import android.app.ActivityManager.RunningTaskInfo;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -71,6 +75,9 @@ public class VoiceConnectionService extends ConnectionService {
     public static Boolean hasOutgoingCall = false;
     public static VoiceConnectionService currentConnectionService = null;
     public static ConstraintsMap _settings = null;
+
+    public static Ringtone ringtone;
+    private static Boolean isSelfManaged = false;
 
     public static Connection getConnection(String connectionId) {
         if (currentConnections.containsKey(connectionId)) {
@@ -124,7 +131,8 @@ public class VoiceConnectionService extends ConnectionService {
     }
 
     @Override
-    public Connection onCreateIncomingConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
+    public Connection onCreateIncomingConnection(PhoneAccountHandle connectionManagerPhoneAccount,
+            ConnectionRequest request) {
         Bundle extra = request.getExtras();
         Uri number = request.getAddress();
         String name = extra.getString(EXTRA_CALLER_NAME);
@@ -132,13 +140,14 @@ public class VoiceConnectionService extends ConnectionService {
         incomingCallConnection.setRinging();
         incomingCallConnection.setInitialized();
 
-        startForegroundService();
+        startForegroundService(name);
 
         return incomingCallConnection;
     }
 
     @Override
-    public Connection onCreateOutgoingConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
+    public Connection onCreateOutgoingConnection(PhoneAccountHandle connectionManagerPhoneAccount,
+            ConnectionRequest request) {
         VoiceConnectionService.hasOutgoingCall = true;
         String uuid = UUID.randomUUID().toString();
 
@@ -182,10 +191,12 @@ public class VoiceConnectionService extends ConnectionService {
         outgoingCallConnection.setAudioModeIsVoip(true);
         outgoingCallConnection.setCallerDisplayName(displayName, TelecomManager.PRESENTATION_ALLOWED);
 
-        startForegroundService();
+        startForegroundService(number);
 
-        // ‍️Weirdly on some Samsung phones (A50, S9...) using `setInitialized` will not display the native UI ...
-        // when making a call from the native Phone application. The call will still be displayed correctly without it.
+        // ‍️Weirdly on some Samsung phones (A50, S9...) using `setInitialized` will not
+        // display the native UI ...
+        // when making a call from the native Phone application. The call will still be
+        // displayed correctly without it.
         if (!Build.MANUFACTURER.equalsIgnoreCase("Samsung")) {
             outgoingCallConnection.setInitialized();
         }
@@ -200,8 +211,9 @@ public class VoiceConnectionService extends ConnectionService {
         return outgoingCallConnection;
     }
 
-    private void startForegroundService() {
+    private void startForegroundService(String caller) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            Log.d(TAG, "[VoiceConnectionService] Build.VERSION.SDK_INT < Build.VERSION_CODES.O");
             // Foreground services not required before SDK 28
             return;
         }
@@ -210,42 +222,72 @@ public class VoiceConnectionService extends ConnectionService {
             Log.w(TAG, "[VoiceConnectionService] Not creating foregroundService because not configured");
             return;
         }
+
         ConstraintsMap foregroundSettings = _settings.getMap("foregroundService");
         String NOTIFICATION_CHANNEL_ID = foregroundSettings.getString("channelId");
         String channelName = foregroundSettings.getString("channelName");
-        NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_NONE);
-        chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName,
+                NotificationManager.IMPORTANCE_MAX);
+        chan.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        // chan.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+        // null);
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         assert manager != null;
         manager.createNotificationChannel(chan);
 
         NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
-        notificationBuilder.setOngoing(true)
-                .setContentTitle(foregroundSettings.getString("notificationTitle"))
-                .setPriority(NotificationManager.IMPORTANCE_MIN)
-                .setCategory(Notification.CATEGORY_SERVICE);
-        
+
+        Context context = this.getApplicationContext();
+        Intent intent = getLaunchIntent(context);
+        PendingIntent activity = PendingIntent.getActivity(this, (int) System.currentTimeMillis(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT);
+        notificationBuilder.setOngoing(true).setVibrate(null).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setTicker("Call_STATUS")
+                // .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+                .setFullScreenIntent(activity, true).setContentIntent(activity)
+                .setContentTitle(foregroundSettings.getString("notificationTitle")).setContentText(caller)
+                .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(Notification.CATEGORY_CALL);
+
         if (foregroundSettings.hasKey("notificationIcon")) {
-            Context context = this.getApplicationContext();
+
             Resources res = context.getResources();
             String smallIcon = foregroundSettings.getString("notificationIcon");
             String mipmap = "mipmap/";
             String drawable = "drawable/";
             if (smallIcon.contains(mipmap)) {
                 notificationBuilder.setSmallIcon(
-                        res.getIdentifier(smallIcon.replace(mipmap, ""),
-                                "mipmap", context.getPackageName()));
+                        res.getIdentifier(smallIcon.replace(mipmap, ""), "mipmap", context.getPackageName()));
             } else if (smallIcon.contains(drawable)) {
                 notificationBuilder.setSmallIcon(
-                        res.getIdentifier(smallIcon.replace(drawable, ""),
-                                "drawable", context.getPackageName()));
+                        res.getIdentifier(smallIcon.replace(drawable, ""), "drawable", context.getPackageName()));
             }
         }
 
         Log.d(TAG, "[VoiceConnectionService] Starting foreground service");
 
         Notification notification = notificationBuilder.build();
+
+        if (VoiceConnectionService.isSelfManaged) {
+            // if (VoiceConnectionService.ringtone == null) {
+            // VoiceConnectionService.ringtone = RingtoneManager.getRingtone(context,
+            // RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE));
+            // }
+            // VoiceConnectionService.ringtone.play();
+        }
+
         startForeground(FOREGROUND_SERVICE_TYPE_MICROPHONE, notification);
+    }
+
+    public static void stopRingtone() {
+        if (ringtone != null && ringtone.isPlaying()) {
+            ringtone.stop();
+        }
+    }
+
+    private static Intent getLaunchIntent(Context context) {
+        String packageName = context.getPackageName();
+        PackageManager packageManager = context.getPackageManager();
+        return packageManager.getLaunchIntentForPackage(packageName);
     }
 
     @RequiresApi(api = Build.VERSION_CODES.N)
@@ -255,14 +297,12 @@ public class VoiceConnectionService extends ConnectionService {
             Log.d(TAG, "[VoiceConnectionService] Discarding stop foreground service, no service configured");
             return;
         }
+        VoiceConnectionService.stopRingtone();
         stopForeground(FOREGROUND_SERVICE_TYPE_MICROPHONE);
     }
 
     private void wakeUpApplication(String uuid, String number, String displayName) {
-        Intent headlessIntent = new Intent(
-            this.getApplicationContext(),
-            CallKeepBackgroundMessagingService.class
-        );
+        Intent headlessIntent = new Intent(this.getApplicationContext(), CallKeepBackgroundMessagingService.class);
         headlessIntent.putExtra("callUUID", uuid);
         headlessIntent.putExtra("name", displayName);
         headlessIntent.putExtra("handle", number);
@@ -293,12 +333,11 @@ public class VoiceConnectionService extends ConnectionService {
         final VoiceConnectionService instance = this;
         sendCallRequestToActivity(ACTION_CHECK_REACHABILITY, null);
 
-        new android.os.Handler().postDelayed(
-            new Runnable() {
-                public void run() {
-                    instance.wakeUpAfterReachabilityTimeout(instance.currentConnectionRequest);
-                }
-            }, 2000);
+        new android.os.Handler().postDelayed(new Runnable() {
+            public void run() {
+                instance.wakeUpAfterReachabilityTimeout(instance.currentConnectionRequest);
+            }
+        }, 2000);
     }
 
     private Boolean canMakeOutgoingCall() {
@@ -312,17 +351,19 @@ public class VoiceConnectionService extends ConnectionService {
         VoiceConnection connection = new VoiceConnection(this, extrasMap);
         connection.setConnectionCapabilities(Connection.CAPABILITY_MUTE | Connection.CAPABILITY_SUPPORT_HOLD);
 
-        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Context context = getApplicationContext();
             TelecomManager telecomManager = (TelecomManager) context.getSystemService(context.TELECOM_SERVICE);
             PhoneAccount phoneAccount = telecomManager.getPhoneAccount(request.getAccountHandle());
 
-            //If the phone account is self managed, then this connection must also be self managed.
-            if((phoneAccount.getCapabilities() & PhoneAccount.CAPABILITY_SELF_MANAGED) == PhoneAccount.CAPABILITY_SELF_MANAGED) {
+            // If the phone account is self managed, then this connection must also be self
+            // managed.
+            if ((phoneAccount.getCapabilities()
+                    & PhoneAccount.CAPABILITY_SELF_MANAGED) == PhoneAccount.CAPABILITY_SELF_MANAGED) {
                 Log.d(TAG, "[VoiceConnectionService] PhoneAccount is SELF_MANAGED, so connection will be too");
                 connection.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED);
-            }
-            else {
+                VoiceConnectionService.isSelfManaged = true;
+            } else {
                 Log.d(TAG, "[VoiceConnectionService] PhoneAccount is not SELF_MANAGED, so connection won't be either");
             }
         }
@@ -334,7 +375,7 @@ public class VoiceConnectionService extends ConnectionService {
         // Get other connections for conferencing
         Map<String, VoiceConnection> otherConnections = new HashMap<>();
         for (Map.Entry<String, VoiceConnection> entry : currentConnections.entrySet()) {
-            if(!(extras.getString(EXTRA_CALL_UUID).equals(entry.getKey()))) {
+            if (!(extras.getString(EXTRA_CALL_UUID).equals(entry.getKey()))) {
                 otherConnections.put(entry.getKey(), entry.getValue());
             }
         }
@@ -386,7 +427,7 @@ public class VoiceConnectionService extends ConnectionService {
         Set<String> keySet = extras.keySet();
         Iterator<String> iterator = keySet.iterator();
 
-        while(iterator.hasNext()) {
+        while (iterator.hasNext()) {
             String key = iterator.next();
             if (extras.get(key) != null) {
                 extrasMap.put(key, extras.get(key).toString());

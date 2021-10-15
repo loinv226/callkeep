@@ -60,6 +60,13 @@ public class VoiceConnection extends Connection {
         }
     }
 
+
+    @Override
+    public void onShowIncomingCallUi() {
+        Log.d(TAG, "onShowIncomingCallUi called");
+        super.onShowIncomingCallUi();
+    }
+
     @Override
     public void onExtrasChanged(Bundle extras) {
         super.onExtrasChanged(extras);
@@ -84,6 +91,7 @@ public class VoiceConnection extends Connection {
         super.onAnswer();
         Log.d(TAG, "onAnswer called");
         Log.d(TAG, "onAnswer ignored");
+       VoiceConnectionService.stopRingtone();
     }
     
     @Override
@@ -97,6 +105,7 @@ public class VoiceConnection extends Connection {
         sendCallRequestToActivity(ACTION_ANSWER_CALL, handle);
         sendCallRequestToActivity(ACTION_AUDIO_SESSION, handle);
         Log.d(TAG, "onAnswer videoState executed");
+       VoiceConnectionService.stopRingtone();
     }
 
     @Override
@@ -112,6 +121,7 @@ public class VoiceConnection extends Connection {
     @Override
     public void onDisconnect() {
         super.onDisconnect();
+       VoiceConnectionService.stopRingtone();
         setDisconnected(new DisconnectCause(DisconnectCause.LOCAL));
         sendCallRequestToActivity(ACTION_END_CALL, handle);
         Log.d(TAG, "onDisconnect executed");
