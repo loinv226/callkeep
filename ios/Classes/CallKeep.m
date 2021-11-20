@@ -234,19 +234,27 @@ static CXProvider* sharedProvider;
     }
     */
 
-    NSDictionary *dic = payload.dictionaryPayload;
-
-    if (dic[@"aps"] != nil) {
-        NSLog(@"Do not use the 'alert' format for push type %@.", payload.type);
-        if(completion != nil) {
-            completion();
-        }
+    NSDictionary *temp = payload.dictionaryPayload;
+    NSLog(@"PUSH_PAYLOAD: %@.", temp);
+    NSDictionary *dic = [temp valueForKeyPath:@"data.map.data.map"];
+    NSLog(@"CALL_PAYLOAD: %@.", dic);
+    if(dic == NULL) {
         return;
     }
-
-    NSString *uuid = dic[@"uuid"];
-    NSString *callerId = dic[@"caller_id"];
-    NSString *callerName = dic[@"caller_name"];
+    // if (dic[@"aps"] != nil) {
+    //     NSLog(@"Do not use the 'alert' format for push %@.", dic);
+    //     if(completion != nil) {
+    //         completion();
+    //     }
+    //     return;
+    // }
+    NSDictionary *from = [dic valueForKeyPath:@"from.map"];
+    NSDictionary *to = [dic valueForKeyPath:@"to.map"];
+    
+    NSString *uuid = dic[@"uuid"]; // callId
+    NSString *callerId = from[@"number"];
+    NSString *callStatus = dic[@"callStatus"];
+    NSString *callerName = from[@"alias"];
     BOOL hasVideo = [dic[@"has_video"] boolValue];
     NSString *callerIdType = dic[@"caller_id_type"];
    

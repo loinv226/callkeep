@@ -286,6 +286,18 @@ class FlutterCallkeep extends EventManager {
     return false;
   }
 
+  Future<String> getRingtoneUri() async {
+    if (isIOS) {
+      return "";
+    }
+    var resp = await _channel
+        .invokeMethod<String>('getRingtoneUri', <String, dynamic>{});
+    if (resp != null) {
+      return resp;
+    }
+    return "";
+  }
+
   Future<void> _setupIOS(Map<String, dynamic> options) async {
     if (options['appName'] == null) {
       throw Exception('CallKeep.setup: option "appName" is required');

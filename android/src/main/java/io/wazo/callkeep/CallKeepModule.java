@@ -66,6 +66,9 @@ import io.wazo.callkeep.utils.ConstraintsArray;
 import io.wazo.callkeep.utils.PermissionUtils;
 
 import static io.wazo.callkeep.Constants.*;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.net.Uri;
 
 // @see https://github.com/kbagchiGWC/voice-quickstart-android/blob/9a2aff7fbe0d0a5ae9457b48e9ad408740dfb968/exampleConnectionService/src/main/java/com/twilio/voice/examples/connectionservice/VoiceConnectionServiceActivity.java
 public class CallKeepModule {
@@ -219,6 +222,10 @@ public class CallKeepModule {
                 result.success(null);
             }
                 break;
+            case "getRingtoneUri": {
+                getRingtoneUri(result);
+            }
+            break;
             default:
                 return false;
         }
@@ -555,6 +562,12 @@ public class CallKeepModule {
             }
         }
         result.success(isOpened);
+    }
+
+    @SuppressLint("WrongConstant")
+    public void getRingtoneUri(@NonNull MethodChannel.Result result) {
+        String ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE).toString();
+        result.success(ringtoneUri);
     }
 
     private void initializeTelecomManager() {

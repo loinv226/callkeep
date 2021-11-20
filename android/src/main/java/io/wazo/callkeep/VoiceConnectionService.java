@@ -29,6 +29,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.net.Uri;
@@ -212,12 +214,12 @@ public class VoiceConnectionService extends ConnectionService {
     }
 
     private void startForegroundService(String caller) {
+        Log.d(TAG, "[VoiceConnectionService] startForegroundService");
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             Log.d(TAG, "[VoiceConnectionService] Build.VERSION.SDK_INT < Build.VERSION_CODES.O");
             // Foreground services not required before SDK 28
             return;
         }
-        Log.d(TAG, "[VoiceConnectionService] startForegroundService");
         if (_settings == null || !_settings.hasKey("foregroundService")) {
             Log.w(TAG, "[VoiceConnectionService] Not creating foregroundService because not configured");
             return;
@@ -226,27 +228,65 @@ public class VoiceConnectionService extends ConnectionService {
         ConstraintsMap foregroundSettings = _settings.getMap("foregroundService");
         String NOTIFICATION_CHANNEL_ID = foregroundSettings.getString("channelId");
         String channelName = foregroundSettings.getString("channelName");
-        NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName,
-                NotificationManager.IMPORTANCE_MAX);
-        chan.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        // chan.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
-        // null);
+        boolean soundEnable = foregroundSettings.getBoolean("soundEnable");
+        String sound = foregroundSettings.getString("sound");
+        Context context = this.getApplicationContext();
+
+        Uri soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+        if(sound != null && sound != "" && soundEnable) {
+            int soundResourceId = context.getResources().getIdentifier(sound, "raw", context.getPackageName());
+            Uri temp = Uri.parse("android.resource://" + context.getPackageName() + "/" + soundResourceId);
+            if(temp != null) {
+                soundUri = Uri.parse("android.resource://" + context.getPackageName() + "/" + soundResourceId);
+            }
+        }
+
+        // Channel config
+        NotificationChannel chan;
+        if (VoiceConnectionService.isSelfManaged && soundEnable) {
+            AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .build();
+            chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName,
+                    NotificationManager.IMPORTANCE_MAX);
+            chan.enableVibration(true);
+            chan.setVibrationPattern(new long[]{1000, 1000, 1000});
+            chan.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+            chan.setSound(soundUri, audioAttributes);
+        } else {
+            chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName,
+                    NotificationManager.IMPORTANCE_NONE);
+            chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        }
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         assert manager != null;
         manager.createNotificationChannel(chan);
 
+        // Notification config
         NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
-
-        Context context = this.getApplicationContext();
-        Intent intent = getLaunchIntent(context);
-        PendingIntent activity = PendingIntent.getActivity(this, (int) System.currentTimeMillis(), intent,
-                PendingIntent.FLAG_UPDATE_CURRENT);
         notificationBuilder.setOngoing(true).setVibrate(null).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setTicker("Call_STATUS")
-                // .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
-                .setFullScreenIntent(activity, true).setContentIntent(activity)
-                .setContentTitle(foregroundSettings.getString("notificationTitle")).setContentText(caller)
-                .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(Notification.CATEGORY_CALL);
+                .setOngoing(true)
+                .setContentTitle(foregroundSettings.getString("notificationTitle"))
+                .setContentText(caller)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setCategory(Notification.CATEGORY_SERVICE);
+
+        if (VoiceConnectionService.isSelfManaged && soundEnable) {
+            Intent intent = getLaunchIntent(context);
+            PendingIntent activity = PendingIntent.getActivity(this, (int) System.currentTimeMillis(), intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT);
+
+            notificationBuilder.setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(Notification.CATEGORY_CALL)
+                    .setFullScreenIntent(activity, true)
+                    .setContentIntent(activity)
+                    .setOngoing(true)
+                    .setVibrate(new long[]{1000, 1000, 1000})
+                    .setDefaults(0)
+                    .setOnlyAlertOnce(true)
+                    .setSound(soundUri);
+        }
 
         if (foregroundSettings.hasKey("notificationIcon")) {
 
@@ -262,17 +302,11 @@ public class VoiceConnectionService extends ConnectionService {
                         res.getIdentifier(smallIcon.replace(drawable, ""), "drawable", context.getPackageName()));
             }
         }
-
         Log.d(TAG, "[VoiceConnectionService] Starting foreground service");
 
         Notification notification = notificationBuilder.build();
-
-        if (VoiceConnectionService.isSelfManaged) {
-            // if (VoiceConnectionService.ringtone == null) {
-            // VoiceConnectionService.ringtone = RingtoneManager.getRingtone(context,
-            // RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE));
-            // }
-            // VoiceConnectionService.ringtone.play();
+        if(soundEnable) {
+            notification.flags = Notification.FLAG_AUTO_CANCEL;
         }
 
         startForeground(FOREGROUND_SERVICE_TYPE_MICROPHONE, notification);
